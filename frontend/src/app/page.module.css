@@ -1,0 +1,154 @@
+.page {
+  min-height: 100vh;
+  padding: 32px;
+  font-family: var(--font-geist-sans);
+  background: radial-gradient(circle at top, #fdf6ff, #f4f7fb 45%, #eef2f7);
+}
+
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.hero {
+  text-align: left;
+}
+
+.hero h1 {
+  font-size: 40px;
+  margin-bottom: 12px;
+  line-height: 1.2;
+}
+
+.hero p {
+  color: #4a5568;
+  font-size: 18px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.15);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dropzone {
+  border: 2px dashed #cbd5f5;
+  border-radius: 16px;
+  padding: 48px 16px;
+  text-align: center;
+  background: #f8faff;
+  cursor: pointer;
+}
+
+.dropzoneTitle {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.dropzoneSubtitle {
+  color: #64748b;
+  font-size: 14px;
+}
+
+.preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+
+.preview div {
+  background: #f1f5f9;
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+.preview dt {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.preview dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.status {
+  font-weight: 500;
+}
+
+.status[data-state="uploading"] {
+  color: #2563eb;
+}
+
+.status[data-state="success"] {
+  color: #059669;
+}
+
+.status[data-state="error"] {
+  color: #dc2626;
+}
+
+.error {
+  color: #dc2626;
+  background: #fee2e2;
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.actions button[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.actions button[type="submit"] {
+  background: #111827;
+  color: #fff;
+}
+
+.secondary {
+  background: #e0e7ff;
+  color: #1e1b4b;
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: 16px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+
+  .hero h1 {
+    font-size: 32px;
+  }
+}
