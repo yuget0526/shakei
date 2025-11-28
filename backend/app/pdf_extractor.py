@@ -85,25 +85,46 @@ def _extract_code_block(text: str) -> str | None:
     return code or None
 
 
+def _extract_package_name(code: str) -> str | None:
+    """Extract the package name from the Java source code."""
+    match = re.search(r"^\s*package\s+([a-zA-Z0-9_.]+)\s*;", code, re.MULTILINE)
+    if match:
+        return match.group(1)
+    return None
+
+
 def extract_sources_from_pages(page_texts: Iterable[str]) -> Dict[str, str]:
     """Transform page texts into a mapping of filename -> source code."""
     sources: Dict[str, str] = {}
     for page_idx, text in enumerate(page_texts, start=1):
         if not text:
             continue
-        filename = _extract_filename(text) or f"Page_{page_idx}.java"
+        filename = _extract_filename(text)
+        if not filename:
+            continue
         cleaned_text = _preprocess_page_text(text)
         code_block = _extract_code_block(cleaned_text)
         if not code_block:
             continue
-        final_name = filename
+            
+        package_name = _extract_package_name(code_block)
+        relative_path = filename
+        if package_name:
+            relative_path = f"{package_name.replace('.', '/')}/{filename}"
+
+        final_path = relative_path
         # Ensure we do not accidentally overwrite duplicates
         dedupe_suffix = 1
-        while final_name in sources:
+        while final_path in sources:
             stem = filename[:-5] if filename.lower().endswith(".java") else filename
             dedupe_suffix += 1
-            final_name = f"{stem}_{dedupe_suffix}.java"
-        sources[final_name] = code_block if code_block.endswith("\n") else f"{code_block}\n"
+            suffix_filename = f"{stem}_{dedupe_suffix}.java"
+            if package_name:
+                final_path = f"{package_name.replace('.', '/')}/{suffix_filename}"
+            else:
+                final_path = suffix_filename
+                
+        sources[final_path] = code_block if code_block.endswith("\n") else f"{code_block}\n"
     return sources
 
 
@@ -141,7 +162,7 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
     except Exception as exc:  # pragma: no cover - depends on file contents
         pdfium_error = exc
 
-    if not texts:
+    if not texts or not any(t.strip() for t in texts):
         try:
             texts = _extract_texts_with_pdfplumber(pdf_bytes)
         except Exception as exc:  # pragma: no cover - depends on file contents
@@ -151,17 +172,49 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
                 ) from exc
             raise
 
+    # Skip the first page (cover page)
+    if len(texts) > 1:
+        texts = texts[1:]
+    else:
+        # If there's only 1 page, maybe we should keep it or skip it?
+        # User said "from 2nd page", so if only 1 page, result is empty.
+        texts = []
+
     sources = extract_sources_from_pages(texts)
     return sources
 
 
-def build_zip_from_sources(sources: Dict[str, str]) -> bytes:
+
+
+
+def generate_file_map(sources: Dict[str, str], base_dir: str = "") -> Dict[str, str]:
+    """Generate a mapping of full file paths to source code."""
+    file_map: Dict[str, str] = {}
+    
+    # Normalize base_dir
+    base_dir = base_dir.strip().strip("/\\")
+    
+    for rel_path, code in sources.items():
+        # Build the full path
+        if base_dir:
+            full_path = f"{base_dir}/{rel_path}"
+        else:
+            full_path = rel_path
+        file_map[full_path] = code
+        
+    return file_map
+
+
+def build_zip_from_sources(sources: Dict[str, str], base_dir: str = "") -> bytes:
     """Create an in-memory ZIP archive from the extracted sources."""
     if not sources:
         raise ValueError("No sources to add to archive")
+    
+    file_map = generate_file_map(sources, base_dir)
+    
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for filename, code in sources.items():
-            zf.writestr(filename, code)
+        for full_path, code in file_map.items():
+            zf.writestr(full_path, code)
     buffer.seek(0)
     return buffer.getvalue()

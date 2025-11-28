@@ -22,6 +22,7 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState("java_sources.zip");
+  const [baseDirectory, setBaseDirectory] = useState("");
 
   useEffect(() => {
     return () => {
@@ -87,6 +88,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("pdf", selectedFile);
+      formData.append("base_directory", baseDirectory);
       const response = await fetch(`${API_BASE_URL}/extract`, {
         method: "POST",
         body: formData,
@@ -116,6 +118,82 @@ export default function Home() {
       const message = error instanceof Error ? error.message : "不明なエラー";
       setErrorMessage(message);
       setStatusMessage("抽出に失敗しました");
+    }
+  };
+
+  const handleDirectGeneration = async () => {
+    if (!selectedFile) {
+      setErrorMessage("PDF ファイルを選択してください");
+      return;
+    }
+
+    // @ts-expect-error showDirectoryPicker is not standard yet
+    if (typeof window.showDirectoryPicker !== "function") {
+      setErrorMessage(
+        "このブラウザはフォルダへの直接保存に対応していません。Chrome または Edge を使用してください。"
+      );
+      return;
+    }
+
+    try {
+      // @ts-expect-error showDirectoryPicker is not standard yet
+      const dirHandle = await window.showDirectoryPicker();
+      if (!dirHandle) return;
+
+      setUploadState("uploading");
+      setStatusMessage("PDF から Java コードを抽出して保存しています...");
+      setErrorMessage(null);
+
+      const formData = new FormData();
+      formData.append("pdf", selectedFile);
+      formData.append("base_directory", baseDirectory);
+      formData.append("response_format", "json");
+
+      const response = await fetch(`${API_BASE_URL}/extract`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const maybeJson = await response.json().catch(() => null);
+        const detail = maybeJson?.detail ?? "抽出に失敗しました";
+        throw new Error(detail);
+      }
+
+      const files: Record<string, string> = await response.json();
+
+      for (const [path, content] of Object.entries(files)) {
+        const parts = path.split("/");
+        let currentHandle = dirHandle;
+
+        // Navigate/Create directories
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          currentHandle = await currentHandle.getDirectoryHandle(part, {
+            create: true,
+          });
+        }
+
+        // Write file
+        const fileName = parts[parts.length - 1];
+        const fileHandle = await currentHandle.getFileHandle(fileName, {
+          create: true,
+        });
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+      }
+
+      setUploadState("success");
+      setStatusMessage("ファイルの保存が完了しました。");
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        return; // User cancelled picker
+      }
+      setUploadState("error");
+      const message = error instanceof Error ? error.message : "不明なエラー";
+      setErrorMessage(message);
+      setStatusMessage("保存に失敗しました");
     }
   };
 
@@ -214,6 +292,60 @@ export default function Home() {
               </dl>
             )}
 
+            <div className="space-y-2">
+              <label
+                htmlFor="base-dir"
+                className="block text-sm font-medium text-slate-700"
+              >
+                保存先ディレクトリ (任意)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="base-dir"
+                  type="text"
+                  value={baseDirectory}
+                  onChange={(e) => setBaseDirectory(e.target.value)}
+                  placeholder="例: src/main/java"
+                  className="w-full flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("dir-input")?.click()}
+                  className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  フォルダを選択
+                </button>
+                <input
+                  id="dir-input"
+                  type="file"
+                  // @ts-expect-error webkitdirectory is not standard
+                  webkitdirectory=""
+                  directory=""
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = e.target.files;
+                    if (files && files.length > 0) {
+                      const path = files[0].webkitRelativePath;
+                      // path is like "folder/file.txt" or "parent/child/file.txt"
+                      // We want the directory part.
+                      // If the user selected "src", and it has "main/java/...", path might be "src/main/java/..."
+                      // Actually webkitRelativePath includes the selected folder name as the first segment.
+                      // If I select "java" inside "src/main", and it has file "Test.java", path is "java/Test.java".
+                      // So the base dir is "java".
+                      // If I want "src/main/java", I need to select "src".
+
+                      // Let's just take the directory of the first file.
+                      const dir = path.substring(0, path.lastIndexOf("/"));
+                      setBaseDirectory(dir);
+                    }
+                  }}
+                />
+              </div>
+              <p className="text-xs text-slate-500">
+                指定したディレクトリの下にパッケージ構成が作成されます。フォルダを選択するとそのパスが自動入力されます。
+              </p>
+            </div>
+
             <div>
               <p
                 className={`text-sm font-medium ${statusTone}`}
@@ -238,6 +370,16 @@ export default function Home() {
                   ? "抽出中..."
                   : "抽出して ZIP を生成"}
               </button>
+
+              <button
+                type="button"
+                onClick={handleDirectGeneration}
+                disabled={!canSubmit}
+                className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                フォルダに直接生成
+              </button>
+
               {downloadUrl && (
                 <button
                   type="button"
