@@ -7,7 +7,7 @@ on:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  REGION: asia-northeast2
+  REGION: asia-northeast1
   REPO_NAME: shakei-repo
   BACKEND_SERVICE: shakei-backend
   FRONTEND_SERVICE: shakei-frontend
