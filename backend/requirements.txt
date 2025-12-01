@@ -4,3 +4,9 @@ pdfplumber==0.11.4
 python-multipart==0.0.9
 pytest==8.3.3
 pypdfium2==4.30.0
+sqlmodel==0.0.22
+asyncpg==0.29.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.9

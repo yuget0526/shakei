@@ -1,0 +1,76 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast1
+  REPO_NAME: shakei-repo
+  BACKEND_SERVICE: shakei-backend
+  FRONTEND_SERVICE: shakei-frontend
+  DB_INSTANCE_NAME: shakei-db
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker asia-northeast1-docker.pkg.dev
+
+      - name: Build and Push Backend
+        run: |
+          docker build --platform linux/amd64 -t asia-northeast1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/backend:${{ github.sha }} ./backend
+          docker push asia-northeast1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/backend:${{ github.sha }}
+
+      - name: Deploy Backend
+        id: deploy-backend
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.BACKEND_SERVICE }}
+          region: ${{ env.REGION }}
+          image: asia-northeast1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/backend:${{ github.sha }}
+          flags: |
+            --allow-unauthenticated
+            --add-cloudsql-instances=${{ env.PROJECT_ID }}:${{ env.REGION }}:${{ env.DB_INSTANCE_NAME }}
+          env_vars: |
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            SECRET_KEY=${{ secrets.SECRET_KEY }}
+            ADMIN_USERNAME=admin
+            ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
+
+      - name: Build and Push Frontend
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg NEXT_PUBLIC_API_BASE_URL=${{ steps.deploy-backend.outputs.url }} \
+            -t asia-northeast1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/frontend:${{ github.sha }} ./frontend
+          docker push asia-northeast1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/frontend:${{ github.sha }}
+
+      - name: Deploy Frontend
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.FRONTEND_SERVICE }}
+          region: ${{ env.REGION }}
+          image: asia-northeast1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/frontend:${{ github.sha }}
+          flags: --allow-unauthenticated
+          env_vars: |
+            NEXT_PUBLIC_API_BASE_URL=${{ steps.deploy-backend.outputs.url }}
