@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "写経.exe",
   description: "写経.exe",
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({
