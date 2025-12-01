@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  ChangeEvent,
-  DragEvent,
-  FormEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { ChangeEvent, DragEvent, useCallback, useMemo, useState } from "react";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -16,25 +8,21 @@ const API_BASE_URL =
 type UploadState = "idle" | "uploading" | "success" | "error";
 
 export default function Home() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [statusMessage, setStatusMessage] = useState("PDF を選択してください");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [downloadName, setDownloadName] = useState("java_sources.zip");
-  const [baseDirectory, setBaseDirectory] = useState("");
+  const [step, setStep] = useState<"upload" | "preview" | "saving" | "success">(
+    "upload"
+  );
+  const [extractedFiles, setExtractedFiles] = useState<Record<
+    string,
+    string
+  > | null>(null);
+  const [showCarousel, setShowCarousel] = useState(false);
+  const [carouselIndex, setCarouselIndex] = useState(0);
 
-  useEffect(() => {
-    return () => {
-      if (downloadUrl) {
-        URL.revokeObjectURL(downloadUrl);
-      }
-    };
-  }, [downloadUrl]);
-
-  const handleFile = useCallback((fileList: FileList | null) => {
+  const handleFile = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) {
-      setSelectedFile(null);
       return;
     }
     const file = fileList[0];
@@ -43,12 +31,40 @@ export default function Home() {
       file.name.toLowerCase().endsWith(".pdf");
     if (!isPdf) {
       setErrorMessage("PDF 形式のファイルのみアップロードできます");
-      setSelectedFile(null);
       return;
     }
-    setSelectedFile(file);
     setErrorMessage(null);
-    setStatusMessage(`${file.name} をアップロードします`);
+    setStatusMessage(`${file.name} を解析しています...`);
+    setUploadState("uploading");
+
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+      formData.append("base_directory", "");
+      formData.append("response_format", "json");
+
+      const response = await fetch(`${API_BASE_URL}/extract`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const maybeJson = await response.json().catch(() => null);
+        const detail = maybeJson?.detail ?? "解析に失敗しました";
+        throw new Error(detail);
+      }
+
+      const files: Record<string, string> = await response.json();
+      setExtractedFiles(files);
+      setStep("preview");
+      setUploadState("success");
+      setStatusMessage("解析が完了しました。");
+    } catch (error) {
+      setUploadState("error");
+      const message = error instanceof Error ? error.message : "不明なエラー";
+      setErrorMessage(message);
+      setStatusMessage("解析に失敗しました");
+    }
   }, []);
 
   const onFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -67,65 +83,8 @@ export default function Home() {
     event.preventDefault();
   };
 
-  const resetDownload = () => {
-    if (downloadUrl) {
-      URL.revokeObjectURL(downloadUrl);
-    }
-    setDownloadUrl(null);
-    setDownloadName("java_sources.zip");
-  };
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!selectedFile) {
-      setErrorMessage("PDF ファイルを選択してください");
-      return;
-    }
-    resetDownload();
-    setUploadState("uploading");
-    setStatusMessage("PDF から Java コードを抽出しています...");
-    setErrorMessage(null);
-    try {
-      const formData = new FormData();
-      formData.append("pdf", selectedFile);
-      formData.append("base_directory", baseDirectory);
-      const response = await fetch(`${API_BASE_URL}/extract`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!response.ok) {
-        const maybeJson = await response.json().catch(() => null);
-        const detail = maybeJson?.detail ?? "抽出に失敗しました";
-        throw new Error(detail);
-      }
-      const blob = await response.blob();
-      if (!blob.size) {
-        throw new Error("空の ZIP が返却されました");
-      }
-      const objectUrl = URL.createObjectURL(blob);
-      setDownloadUrl(objectUrl);
-      const disposition = response.headers.get("Content-Disposition");
-      if (disposition) {
-        const match = disposition.match(/filename="?([^";]+)"?/i);
-        if (match?.[1]) {
-          setDownloadName(match[1]);
-        }
-      }
-      setUploadState("success");
-      setStatusMessage("抽出が完了しました。ZIP をダウンロードできます。");
-    } catch (error) {
-      setUploadState("error");
-      const message = error instanceof Error ? error.message : "不明なエラー";
-      setErrorMessage(message);
-      setStatusMessage("抽出に失敗しました");
-    }
-  };
-
   const handleDirectGeneration = async () => {
-    if (!selectedFile) {
-      setErrorMessage("PDF ファイルを選択してください");
-      return;
-    }
+    if (!extractedFiles) return;
 
     // @ts-expect-error showDirectoryPicker is not standard yet
     if (typeof window.showDirectoryPicker !== "function") {
@@ -140,29 +99,10 @@ export default function Home() {
       const dirHandle = await window.showDirectoryPicker();
       if (!dirHandle) return;
 
-      setUploadState("uploading");
-      setStatusMessage("PDF から Java コードを抽出して保存しています...");
-      setErrorMessage(null);
+      setStep("saving");
+      setStatusMessage("ファイルを保存しています...");
 
-      const formData = new FormData();
-      formData.append("pdf", selectedFile);
-      formData.append("base_directory", baseDirectory);
-      formData.append("response_format", "json");
-
-      const response = await fetch(`${API_BASE_URL}/extract`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const maybeJson = await response.json().catch(() => null);
-        const detail = maybeJson?.detail ?? "抽出に失敗しました";
-        throw new Error(detail);
-      }
-
-      const files: Record<string, string> = await response.json();
-
-      for (const [path, content] of Object.entries(files)) {
+      for (const [path, content] of Object.entries(extractedFiles)) {
         const parts = path.split("/");
         let currentHandle = dirHandle;
 
@@ -184,12 +124,14 @@ export default function Home() {
         await writable.close();
       }
 
-      setUploadState("success");
+      setStep("success");
       setStatusMessage("ファイルの保存が完了しました。");
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        return; // User cancelled picker
+        setStep("preview"); // Revert to preview if cancelled
+        return;
       }
+      setStep("preview"); // Revert to preview on error
       setUploadState("error");
       const message = error instanceof Error ? error.message : "不明なエラー";
       setErrorMessage(message);
@@ -197,51 +139,29 @@ export default function Home() {
     }
   };
 
-  const triggerDownload = () => {
-    if (!downloadUrl) {
-      return;
-    }
-    const anchor = document.createElement("a");
-    anchor.href = downloadUrl;
-    anchor.download = downloadName;
-    anchor.click();
+  const fileList = useMemo(() => {
+    if (!extractedFiles) return [];
+    return Object.keys(extractedFiles).sort();
+  }, [extractedFiles]);
+
+  const currentFileContent = useMemo(() => {
+    if (!extractedFiles || fileList.length === 0) return "";
+    return extractedFiles[fileList[carouselIndex]];
+  }, [extractedFiles, fileList, carouselIndex]);
+
+  const reset = () => {
+    setStep("upload");
+    setExtractedFiles(null);
+    setShowCarousel(false);
+    setCarouselIndex(0);
+    setUploadState("idle");
+    setStatusMessage("PDF を選択してください");
+    setErrorMessage(null);
   };
-
-  const filePreview = useMemo(() => {
-    if (!selectedFile) {
-      return null;
-    }
-    const sizeInKb = (selectedFile.size / 1024).toFixed(1);
-    return [
-      { label: "ファイル名", value: selectedFile.name },
-      { label: "サイズ", value: `${sizeInKb} KB` },
-      {
-        label: "更新日",
-        value: selectedFile.lastModified
-          ? new Date(selectedFile.lastModified).toLocaleString()
-          : "-",
-      },
-    ];
-  }, [selectedFile]);
-
-  const canSubmit = Boolean(selectedFile) && uploadState !== "uploading";
-
-  const statusTone = useMemo(() => {
-    switch (uploadState) {
-      case "uploading":
-        return "text-amber-600";
-      case "success":
-        return "text-emerald-600";
-      case "error":
-        return "text-rose-600";
-      default:
-        return "text-slate-600";
-    }
-  }, [uploadState]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-purple-50 via-slate-50 to-slate-100 px-4 py-10 text-slate-900">
-      <main className="mx-auto w-full max-w-3xl space-y-8">
+      <main className="mx-auto w-full max-w-4xl space-y-8">
         <header className="space-y-3 text-center sm:text-left">
           <p className="text-sm font-semibold tracking-widest text-purple-500">
             写経.exe
@@ -254,143 +174,191 @@ export default function Home() {
           </p>
         </header>
 
-        <section className="rounded-3xl bg-white/95 p-6 shadow-2xl shadow-purple-100/60 backdrop-blur">
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            <label
-              htmlFor="pdf-input"
-              className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/60 px-6 py-10 text-center transition hover:border-purple-400 hover:bg-purple-50"
-              onDragOver={onDragOver}
-              onDrop={onDrop}
-            >
-              <input
-                id="pdf-input"
-                type="file"
-                accept="application/pdf"
-                onChange={onFileInputChange}
-                hidden
-              />
-              <span className="text-lg font-semibold text-slate-900">
-                PDF をドラッグ&ドロップ
-              </span>
-              <span className="mt-2 text-sm text-slate-500">
-                またはクリックしてファイルを選択
-              </span>
-            </label>
-
-            {filePreview && (
-              <dl className="grid gap-3 rounded-2xl bg-slate-50 p-4 sm:grid-cols-3">
-                {filePreview.map(({ label, value }) => (
-                  <div key={label} className="space-y-1">
-                    <dt className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-                      {label}
-                    </dt>
-                    <dd className="truncate text-sm font-medium text-slate-900">
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            <div className="space-y-2">
+        <section className="rounded-3xl bg-white/95 p-6 shadow-2xl shadow-purple-100/60 backdrop-blur transition-all duration-500">
+          {step === "upload" && (
+            <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
               <label
-                htmlFor="base-dir"
-                className="block text-sm font-medium text-slate-700"
+                htmlFor="pdf-input"
+                className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/60 px-6 py-10 text-center transition hover:border-purple-400 hover:bg-purple-50"
+                onDragOver={onDragOver}
+                onDrop={onDrop}
               >
-                保存先ディレクトリ (任意)
-              </label>
-              <div className="flex gap-2">
                 <input
-                  id="base-dir"
-                  type="text"
-                  value={baseDirectory}
-                  onChange={(e) => setBaseDirectory(e.target.value)}
-                  placeholder="例: src/main/java"
-                  className="w-full flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => document.getElementById("dir-input")?.click()}
-                  className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  フォルダを選択
-                </button>
-                <input
-                  id="dir-input"
+                  id="pdf-input"
                   type="file"
-                  // @ts-expect-error webkitdirectory is not standard
-                  webkitdirectory=""
-                  directory=""
-                  className="hidden"
-                  onChange={(e) => {
-                    const files = e.target.files;
-                    if (files && files.length > 0) {
-                      const path = files[0].webkitRelativePath;
-                      // path is like "folder/file.txt" or "parent/child/file.txt"
-                      // We want the directory part.
-                      // If the user selected "src", and it has "main/java/...", path might be "src/main/java/..."
-                      // Actually webkitRelativePath includes the selected folder name as the first segment.
-                      // If I select "java" inside "src/main", and it has file "Test.java", path is "java/Test.java".
-                      // So the base dir is "java".
-                      // If I want "src/main/java", I need to select "src".
-
-                      // Let's just take the directory of the first file.
-                      const dir = path.substring(0, path.lastIndexOf("/"));
-                      setBaseDirectory(dir);
-                    }
-                  }}
+                  accept="application/pdf"
+                  onChange={onFileInputChange}
+                  hidden
                 />
-              </div>
-              <p className="text-xs text-slate-500">
-                指定したディレクトリの下にパッケージ構成が作成されます。フォルダを選択するとそのパスが自動入力されます。
-              </p>
-            </div>
-
-            <div>
-              <p
-                className={`text-sm font-medium ${statusTone}`}
-                data-state={uploadState}
-              >
-                {statusMessage}
-              </p>
+                <span className="text-lg font-semibold text-slate-900">
+                  PDF をドラッグ&ドロップ
+                </span>
+                <span className="mt-2 text-sm text-slate-500">
+                  またはクリックしてファイルを選択
+                </span>
+              </label>
+              {uploadState === "uploading" && (
+                <p className="text-center text-sm font-medium text-amber-600 animate-pulse">
+                  {statusMessage}
+                </p>
+              )}
               {errorMessage && (
-                <p className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-600">
+                <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-600">
                   {errorMessage}
                 </p>
               )}
-            </div>
+            </form>
+          )}
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className="inline-flex items-center justify-center rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {uploadState === "uploading"
-                  ? "抽出中..."
-                  : "抽出して ZIP を生成"}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDirectGeneration}
-                disabled={!canSubmit}
-                className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                フォルダに直接生成
-              </button>
-
-              {downloadUrl && (
+          {step === "preview" && extractedFiles && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-slate-800">
+                  抽出されたファイル ({fileList.length})
+                </h2>
                 <button
-                  type="button"
-                  onClick={triggerDownload}
-                  className="inline-flex items-center justify-center rounded-full bg-purple-100 px-6 py-3 text-sm font-semibold text-purple-700 transition hover:bg-purple-200"
+                  onClick={reset}
+                  className="text-sm text-slate-500 hover:text-slate-700"
                 >
-                  ZIP をダウンロード
+                  最初に戻る
                 </button>
+              </div>
+
+              {!showCarousel ? (
+                <div className="space-y-4">
+                  <ul className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-mono text-slate-700">
+                    {fileList.map((file) => (
+                      <li
+                        key={file}
+                        className="py-1 border-b border-slate-100 last:border-0"
+                      >
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={() => setShowCarousel(true)}
+                      className="inline-flex items-center justify-center rounded-full bg-purple-100 px-6 py-3 text-sm font-semibold text-purple-700 transition hover:bg-purple-200"
+                    >
+                      作成を実行 (プレビュー)
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-900 p-4 text-slate-50 shadow-inner">
+                    <div className="mb-2 flex items-center justify-between border-b border-slate-700 pb-2">
+                      <span className="font-mono text-sm text-purple-300">
+                        {fileList[carouselIndex]}
+                      </span>
+                      <span className="text-xs text-slate-400">
+                        {carouselIndex + 1} / {fileList.length}
+                      </span>
+                    </div>
+                    <pre className="h-80 overflow-auto whitespace-pre font-mono text-xs leading-relaxed">
+                      <code>{currentFileContent}</code>
+                    </pre>
+                  </div>
+
+                  <div className="flex items-center justify-between px-2">
+                    <button
+                      onClick={() =>
+                        setCarouselIndex((i) => Math.max(0, i - 1))
+                      }
+                      disabled={carouselIndex === 0}
+                      className="rounded-full p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-30"
+                    >
+                      ← 前へ
+                    </button>
+                    <div className="flex gap-2">
+                      {fileList.map((_, idx) => (
+                        <div
+                          key={idx}
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            idx === carouselIndex
+                              ? "bg-purple-500"
+                              : "bg-slate-300"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      onClick={() =>
+                        setCarouselIndex((i) =>
+                          Math.min(fileList.length - 1, i + 1)
+                        )
+                      }
+                      disabled={carouselIndex === fileList.length - 1}
+                      className="rounded-full p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-30"
+                    >
+                      次へ →
+                    </button>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 space-y-3">
+                    <div className="rounded-lg bg-amber-50 p-3 text-center">
+                      <p className="text-sm font-medium text-amber-800">
+                        プロジェクトはもう作成した？
+                      </p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        まだの場合は IntelliJ でプロジェクトを作成し、その中の{" "}
+                        <span className="font-bold">src</span>{" "}
+                        フォルダを選択してください。
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleDirectGeneration}
+                      className="w-full inline-flex items-center justify-center rounded-full bg-slate-900 px-6 py-4 text-base font-semibold text-white transition hover:bg-slate-800 shadow-lg shadow-purple-200"
+                    >
+                      フォルダを選択して抽出
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
-          </form>
+          )}
+
+          {step === "saving" && (
+            <div className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="h-12 w-12 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600"></div>
+              <p className="text-lg font-medium text-slate-700">
+                保存しています...
+              </p>
+            </div>
+          )}
+
+          {step === "success" && (
+            <div className="text-center py-10 space-y-6">
+              <div className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <svg
+                  className="h-10 w-10"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800">
+                完了しました！
+              </h2>
+              <p className="text-slate-600">
+                指定したフォルダにファイルが保存されました。
+              </p>
+              <button
+                onClick={reset}
+                className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-8 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                続けて別のファイルを処理
+              </button>
+            </div>
+          )}
         </section>
       </main>
     </div>
