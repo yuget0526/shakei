@@ -31,9 +31,7 @@ app = FastAPI()
 # CORS (Cross-Origin Resource Sharing) の設定
 # フロントエンド (http://localhost:3000) からのアクセスを許可します
 origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    # Cloud Run にデプロイした後は、その URL もここに追加する必要があります
+    "*"
 ]
 
 app.add_middleware(
