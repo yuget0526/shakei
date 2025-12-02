@@ -11,7 +11,6 @@ env:
   REPO_NAME: shakei-repo
   BACKEND_SERVICE: shakei-backend
   FRONTEND_SERVICE: shakei-frontend
-  DB_INSTANCE_NAME: shakei-db-v3
 
 jobs:
   deploy:
@@ -51,7 +50,6 @@ jobs:
           image: asia-northeast1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/backend:${{ github.sha }}
           flags: |
             --allow-unauthenticated
-            --add-cloudsql-instances=${{ env.PROJECT_ID }}:${{ env.REGION }}:${{ env.DB_INSTANCE_NAME }}
           env_vars: |
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             SECRET_KEY=${{ secrets.SECRET_KEY }}
