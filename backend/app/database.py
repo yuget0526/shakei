@@ -8,6 +8,10 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+# Supabase requires SSL
+if "postgresql" in DATABASE_URL:
+    connect_args["sslmode"] = "require"
+
 engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 
 def init_db():
