@@ -172,12 +172,47 @@ def _preprocess_page_text(text: str) -> str:
     merged: List[Tuple[int, str]] = []
     for line_num, code in parsed:
         if merged and is_incomplete(merged[-1][1]):
-            # Previous line is incomplete, append this code to it
+            # Previous line is incomplete, append needed part to complete it
             prev_num, prev_code = merged[-1]
-            if prev_code.endswith((' ', '\t')):
-                merged[-1] = (prev_num, prev_code + code.lstrip())
+            
+            # Find the completion point (first {, }, or ; where brackets balance)
+            completion_idx = -1
+            open_count = prev_code.count('(') + prev_code.count('[')
+            close_count = prev_code.count(')') + prev_code.count(']')
+            
+            for i, ch in enumerate(code):
+                if ch == '(' or ch == '[':
+                    open_count += 1
+                elif ch == ')' or ch == ']':
+                    close_count += 1
+                    if close_count == open_count:
+                        # Find the next { or ; after this point
+                        rest = code[i+1:]
+                        for j, c in enumerate(rest):
+                            if c == '{' or c == ';':
+                                completion_idx = i + 1 + j + 1
+                                break
+                        if completion_idx > 0:
+                            break
+            
+            if completion_idx > 0:
+                # Split: append completion part to prev, add remainder as new entry
+                completion_part = code[:completion_idx]
+                remainder = code[completion_idx:].strip()
+                
+                if prev_code.endswith((' ', '\t')):
+                    merged[-1] = (prev_num, prev_code + completion_part.lstrip())
+                else:
+                    merged[-1] = (prev_num, prev_code + ' ' + completion_part.lstrip())
+                
+                if remainder:
+                    merged.append((line_num, '            ' + remainder))  # Keep indentation
             else:
-                merged[-1] = (prev_num, prev_code + ' ' + code.lstrip())
+                # No split found, append all
+                if prev_code.endswith((' ', '\t')):
+                    merged[-1] = (prev_num, prev_code + code.lstrip())
+                else:
+                    merged[-1] = (prev_num, prev_code + ' ' + code.lstrip())
         else:
             merged.append((line_num, code))
     
