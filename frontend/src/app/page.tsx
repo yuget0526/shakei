@@ -55,6 +55,13 @@ interface FileSystemWritableFileStream {
   close(): Promise<void>;
 }
 
+// Window に showDirectoryPicker を追加
+declare global {
+  interface Window {
+    showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
+  }
+}
+
 export default function Home() {
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [statusMessage, setStatusMessage] = useState("PDF を選択してください");
@@ -162,7 +169,6 @@ export default function Home() {
       return;
     }
 
-    // @ts-expect-error showDirectoryPicker is not standard yet
     if (typeof window.showDirectoryPicker !== "function") {
       setErrorMessage(
         "このブラウザはフォルダへの直接保存に対応していません。Chrome または Edge を使用してください。"
@@ -171,7 +177,6 @@ export default function Home() {
     }
 
     try {
-      // @ts-expect-error showDirectoryPicker is not standard yet
       const dirHandle: FileSystemDirectoryHandle =
         await window.showDirectoryPicker();
       if (!dirHandle) return;
