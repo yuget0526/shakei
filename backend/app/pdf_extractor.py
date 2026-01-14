@@ -69,11 +69,13 @@ def _extract_filename_and_page_info(text: str) -> Tuple[str | None, int | None, 
 
 
 def _preprocess_page_text(text: str) -> str:
-    """Remove printed headers and leading line numbers.
+    """Remove printed headers and extract code with proper empty lines.
     
     PyMuPDF format:
     - Header lines: Page info, Filename, Printed timestamp, Printed for
     - Then alternating: code line, line number, code line, line number...
+    
+    We parse line numbers to detect gaps (which represent empty lines in the original).
     """
     if not text:
         return ""
@@ -97,21 +99,55 @@ def _preprocess_page_text(text: str) -> str:
         break
     
     content_lines = lines[header_end:]
-    cleaned: List[str] = []
+    
+    # Parse content: extract (line_number, code_line) pairs
+    # PyMuPDF outputs: code_line, line_number, code_line, line_number...
+    parsed: List[Tuple[int, str]] = []
+    current_code = None
     
     for line in content_lines:
-        # Skip lines that are just line numbers
-        if re.match(r"^\s*\d+\s*$", line):
-            continue
+        stripped = line.strip()
         
-        # For lines with leading line numbers (pypdfium2 format)
-        match = re.match(r"^\s*\d+(\s+)(.*)$", line)
-        if match:
-            spacing, remainder = match.groups()
-            keep_spacing = spacing[1:] if len(spacing) > 1 else ""
-            cleaned.append(f"{keep_spacing}{remainder}")
+        # Check if this line is just a line number
+        if re.match(r"^\d+$", stripped):
+            line_num = int(stripped)
+            if current_code is not None:
+                parsed.append((line_num, current_code))
+                current_code = None
+            else:
+                # Line number without code = empty line
+                parsed.append((line_num, ""))
         else:
-            cleaned.append(line)
+            # This is a code line
+            # For lines with leading line numbers (pypdfium2 format)
+            match = re.match(r"^\s*\d+(\s+)(.*)$", line)
+            if match:
+                spacing, remainder = match.groups()
+                keep_spacing = spacing[1:] if len(spacing) > 1 else ""
+                current_code = f"{keep_spacing}{remainder}"
+            else:
+                current_code = line
+    
+    # If there's remaining code without a line number, add it
+    if current_code is not None:
+        # Assign next line number
+        last_num = parsed[-1][0] if parsed else 0
+        parsed.append((last_num + 1, current_code))
+    
+    # Sort by line number
+    parsed.sort(key=lambda x: x[0])
+    
+    # Build output with gaps filled as empty lines
+    cleaned: List[str] = []
+    expected_line = 1
+    
+    for line_num, code in parsed:
+        # Fill any gaps with empty lines
+        while expected_line < line_num:
+            cleaned.append("")
+            expected_line += 1
+        cleaned.append(code)
+        expected_line = line_num + 1
     
     # Remove leading/trailing empty lines only, preserve indentation
     while cleaned and not cleaned[0].strip():
