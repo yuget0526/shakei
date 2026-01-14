@@ -127,6 +127,10 @@ def _preprocess_page_text(text: str) -> str:
                 parsed.append((line_num, ""))
         else:
             # This is a code line
+            # Skip ellipsis (used as continuation marker in some PDFs)
+            if stripped == "…" or stripped == "...":
+                continue
+            
             # For lines with leading line numbers (pypdfium2 format)
             match = re.match(r"^\s*\d+(\s+)(.*)$", line)
             if match:
