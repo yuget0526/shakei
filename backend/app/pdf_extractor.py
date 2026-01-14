@@ -105,13 +105,11 @@ def _preprocess_page_text(text: str) -> str:
         
         # Check if this line is just a line number
         if re.match(r"^\s*\d+\s*$", line):
-            # Check if next line is also a line number or end of content
+            # Check if next line is also a line number
             # If so, this line number represents an empty line
-            if i + 1 >= len(content_lines):
-                cleaned.append("")  # Empty line at end
-            elif re.match(r"^\s*\d+\s*$", content_lines[i + 1]):
+            if i + 1 < len(content_lines) and re.match(r"^\s*\d+\s*$", content_lines[i + 1]):
                 cleaned.append("")  # Consecutive line numbers = empty line
-            # Otherwise, skip this line number (next line is the code)
+            # Otherwise, skip this line number (next line is the code, or end of page)
             i += 1
             continue
         
