@@ -102,8 +102,9 @@ def _preprocess_page_text(text: str) -> str:
     
     # Parse content: extract (line_number, code_line) pairs
     # PyMuPDF outputs: code_line, line_number, code_line, line_number...
+    # Note: Multiple code lines may belong to the same line number
     parsed: List[Tuple[int, str]] = []
-    current_code = None
+    current_code_parts: List[str] = []
     
     for line in content_lines:
         stripped = line.strip()
@@ -111,9 +112,16 @@ def _preprocess_page_text(text: str) -> str:
         # Check if this line is just a line number
         if re.match(r"^\d+$", stripped):
             line_num = int(stripped)
-            if current_code is not None:
-                parsed.append((line_num, current_code))
-                current_code = None
+            if current_code_parts:
+                # Join multiple code parts (they belong to the same logical line)
+                # If previous part ends with space, direct join; otherwise add space
+                combined_code = ""
+                for part in current_code_parts:
+                    if combined_code and not combined_code.endswith((" ", "\t")):
+                        combined_code += " "
+                    combined_code += part
+                parsed.append((line_num, combined_code))
+                current_code_parts = []
             else:
                 # Line number without code = empty line
                 parsed.append((line_num, ""))
@@ -124,15 +132,16 @@ def _preprocess_page_text(text: str) -> str:
             if match:
                 spacing, remainder = match.groups()
                 keep_spacing = spacing[1:] if len(spacing) > 1 else ""
-                current_code = f"{keep_spacing}{remainder}"
+                current_code_parts.append(f"{keep_spacing}{remainder}")
             else:
-                current_code = line
+                current_code_parts.append(line)
     
     # If there's remaining code without a line number, add it
-    if current_code is not None:
+    if current_code_parts:
         # Assign next line number
         last_num = parsed[-1][0] if parsed else 0
-        parsed.append((last_num + 1, current_code))
+        combined_code = "\n".join(current_code_parts)
+        parsed.append((last_num + 1, combined_code))
     
     # Sort by line number
     parsed.sort(key=lambda x: x[0])
