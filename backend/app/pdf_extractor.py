@@ -189,10 +189,12 @@ def _merge_multipage_files(page_data: List[Tuple[str, int, int, str]]) -> Dict[s
 
 
 def extract_sources_from_pages(page_texts: List[str]) -> Dict[str, str]:
-    """Transform page texts into a mapping of filepath -> source code."""
+    """Transform page texts into a mapping of filepath -> source code.
     
-    # First pass: extract filename, page info, and cleaned text
-    page_data: List[Tuple[str, int, int, str]] = []
+    Note: Multi-page files are NOT merged due to pypdfium2 spacing issues on Page 2+.
+    Only Page 1 of each file is extracted.
+    """
+    sources: Dict[str, str] = {}
     
     for text in page_texts:
         if not text:
@@ -202,24 +204,19 @@ def extract_sources_from_pages(page_texts: List[str]) -> Dict[str, str]:
         if not filename:
             continue
         
+        # Skip Page 2+ to avoid spacing issues with pypdfium2
+        if current_page and current_page > 1:
+            continue
+        
         cleaned_text = _preprocess_page_text(text)
         if not cleaned_text:
             continue
         
-        page_data.append((filename, current_page or 1, total_pages or 1, cleaned_text))
-    
-    # Merge multi-page files
-    merged_files = _merge_multipage_files(page_data)
-    
-    # Second pass: extract code and build paths
-    sources: Dict[str, str] = {}
-    
-    for filename, merged_text in merged_files.items():
         language = _get_language(filename)
         if language == "unknown":
             continue
         
-        code_block = _extract_code_block(merged_text, language)
+        code_block = _extract_code_block(cleaned_text, language)
         if not code_block:
             continue
         
@@ -267,21 +264,21 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
         raise ValueError("PDF file is empty")
 
     texts: List[str] = []
-    pdfplumber_error: Exception | None = None
+    pdfium_error: Exception | None = None
     
-    # Prefer pdfplumber as it handles text spacing better
+    # Prefer pypdfium2 for Japanese text support
     try:
-        texts = _extract_texts_with_pdfplumber(pdf_bytes)
+        texts = _extract_texts_with_pdfium(pdf_bytes)
     except Exception as exc:
-        pdfplumber_error = exc
+        pdfium_error = exc
 
     if not texts or not any(t.strip() for t in texts):
         try:
-            texts = _extract_texts_with_pdfium(pdf_bytes)
+            texts = _extract_texts_with_pdfplumber(pdf_bytes)
         except Exception as exc:
-            if pdfplumber_error:
+            if pdfium_error:
                 raise RuntimeError(
-                    "Failed to extract PDF text using both pdfplumber and pypdfium2",
+                    "Failed to extract PDF text using both pypdfium2 and pdfplumber",
                 ) from exc
             raise
 
