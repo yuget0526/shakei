@@ -1,16 +1,20 @@
-"""Utilities for extracting Java sources from PDF text pages."""
+"""Utilities for extracting source code from PDF text pages."""
 from __future__ import annotations
 
 import io
 import re
 import zipfile
-from typing import Dict, Iterable, List
+from typing import Dict, List, Tuple
 
 import pdfplumber
 import pypdfium2 as pdfium
 
-FILENAME_PATTERN = re.compile(r"([A-Za-z0-9_]+\.java)")
-CODE_START_HINTS = (
+# Supported file patterns
+JAVA_FILENAME_PATTERN = re.compile(r"([A-Za-z0-9_]+\.java)")
+PHP_FILENAME_PATTERN = re.compile(r"([A-Za-z0-9_]+\.php)")
+
+# Code start hints for Java
+JAVA_CODE_START_HINTS = (
     "package ",
     "import ",
     "public ",
@@ -19,6 +23,48 @@ CODE_START_HINTS = (
     "enum ",
     "@",
 )
+
+# Code start hints for PHP
+PHP_CODE_START_HINTS = (
+    "<?php",
+    "<?",
+    "namespace ",
+    "use ",
+    "class ",
+    "interface ",
+    "trait ",
+    "function ",
+)
+
+
+def _extract_filename_and_page_info(text: str) -> Tuple[str | None, int | None, int | None]:
+    """
+    Extract filename and page info (current/total) from header.
+    Returns: (filename, current_page, total_pages)
+    """
+    lines = text.splitlines()[:5]
+    
+    for line in lines:
+        # Try Java first
+        java_match = JAVA_FILENAME_PATTERN.search(line)
+        if java_match:
+            filename = java_match.group(1)
+            # Look for "Page X/Y" pattern
+            page_match = re.search(r"Page\s+(\d+)/(\d+)", line)
+            if page_match:
+                return filename, int(page_match.group(1)), int(page_match.group(2))
+            return filename, 1, 1
+        
+        # Try PHP
+        php_match = PHP_FILENAME_PATTERN.search(line)
+        if php_match:
+            filename = php_match.group(1)
+            page_match = re.search(r"Page\s+(\d+)/(\d+)", line)
+            if page_match:
+                return filename, int(page_match.group(1)), int(page_match.group(2))
+            return filename, 1, 1
+    
+    return None, None, None
 
 
 def _preprocess_page_text(text: str) -> str:
@@ -43,88 +89,153 @@ def _preprocess_page_text(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
-def _extract_filename(text: str) -> str | None:
-    """Return the first plausible *.java filename contained in the text."""
-    lines = text.splitlines()
-    header_slice = lines[:5]
-    for line in header_slice:
-        match = FILENAME_PATTERN.search(line)
-        if match:
-            return match.group(1)
-    match = FILENAME_PATTERN.search(text)
-    if match:
-        return match.group(1)
-    return None
-
-
-def _extract_code_block(text: str) -> str | None:
+def _extract_code_block(text: str, language: str = "java") -> str | None:
     """Grab the code portion by finding the first code-like line."""
     lines = [line.rstrip() for line in text.splitlines()]
+    
+    hints = JAVA_CODE_START_HINTS if language == "java" else PHP_CODE_START_HINTS
+    
     code_start_idx = None
     for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
-        normalized = stripped.lower()
-        if any(stripped.startswith(prefix) for prefix in CODE_START_HINTS):
+        if any(stripped.startswith(prefix) for prefix in hints):
             code_start_idx = idx
             break
-        if normalized.startswith(("/*", "//")):
-            # Comments at the very top probably belong to the code block
+        if stripped.startswith(("/*", "//", "#", "/**")):
             code_start_idx = idx
             break
+    
     if code_start_idx is None:
-        # fallback to very first non-empty line
         for idx, line in enumerate(lines):
             if line.strip():
                 code_start_idx = idx
                 break
+    
     if code_start_idx is None:
         return None
+    
     code = "\n".join(lines[code_start_idx:]).strip()
     return code or None
 
 
-def _extract_package_name(code: str) -> str | None:
-    """Extract the package name from the Java source code."""
+def _extract_java_package(code: str) -> str | None:
+    """Extract the package name from Java source code."""
     match = re.search(r"^\s*package\s+([a-zA-Z0-9_.]+)\s*;", code, re.MULTILINE)
     if match:
         return match.group(1)
     return None
 
 
-def extract_sources_from_pages(page_texts: Iterable[str]) -> Dict[str, str]:
-    """Transform page texts into a mapping of filename -> source code."""
-    sources: Dict[str, str] = {}
-    for page_idx, text in enumerate(page_texts, start=1):
+def _extract_php_namespace(code: str) -> str | None:
+    """Extract the namespace from PHP source code."""
+    match = re.search(r"^\s*namespace\s+([a-zA-Z0-9_\\]+)\s*;", code, re.MULTILINE)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_language(filename: str) -> str:
+    """Determine the language from filename."""
+    if filename.lower().endswith(".java"):
+        return "java"
+    elif filename.lower().endswith(".php"):
+        return "php"
+    return "unknown"
+
+
+def _build_relative_path(filename: str, code: str) -> str:
+    """Build relative path based on language-specific rules."""
+    language = _get_language(filename)
+    
+    if language == "java":
+        package_name = _extract_java_package(code)
+        if package_name:
+            return f"{package_name.replace('.', '/')}/{filename}"
+    elif language == "php":
+        namespace = _extract_php_namespace(code)
+        if namespace:
+            # PHP uses backslash for namespaces, convert to forward slash
+            return f"{namespace.replace(chr(92), '/')}/{filename}"
+    
+    return filename
+
+
+def _merge_multipage_files(page_data: List[Tuple[str, int, int, str]]) -> Dict[str, str]:
+    """
+    Merge pages that belong to the same file.
+    page_data: List of (filename, current_page, total_pages, cleaned_text)
+    Returns: Dict of filename -> merged code
+    """
+    # Group pages by filename
+    file_pages: Dict[str, List[Tuple[int, str]]] = {}
+    
+    for filename, current_page, total_pages, text in page_data:
+        if filename not in file_pages:
+            file_pages[filename] = []
+        file_pages[filename].append((current_page, text))
+    
+    # Merge pages for each file
+    merged: Dict[str, str] = {}
+    for filename, pages in file_pages.items():
+        # Sort by page number
+        pages.sort(key=lambda x: x[0])
+        # Merge all page texts
+        merged_text = "\n".join(text for _, text in pages)
+        merged[filename] = merged_text
+    
+    return merged
+
+
+def extract_sources_from_pages(page_texts: List[str]) -> Dict[str, str]:
+    """Transform page texts into a mapping of filepath -> source code."""
+    
+    # First pass: extract filename, page info, and cleaned text
+    page_data: List[Tuple[str, int, int, str]] = []
+    
+    for text in page_texts:
         if not text:
             continue
-        filename = _extract_filename(text)
+        
+        filename, current_page, total_pages = _extract_filename_and_page_info(text)
         if not filename:
             continue
+        
         cleaned_text = _preprocess_page_text(text)
-        code_block = _extract_code_block(cleaned_text)
+        if not cleaned_text:
+            continue
+        
+        page_data.append((filename, current_page or 1, total_pages or 1, cleaned_text))
+    
+    # Merge multi-page files
+    merged_files = _merge_multipage_files(page_data)
+    
+    # Second pass: extract code and build paths
+    sources: Dict[str, str] = {}
+    
+    for filename, merged_text in merged_files.items():
+        language = _get_language(filename)
+        if language == "unknown":
+            continue
+        
+        code_block = _extract_code_block(merged_text, language)
         if not code_block:
             continue
-            
-        package_name = _extract_package_name(code_block)
-        relative_path = filename
-        if package_name:
-            relative_path = f"{package_name.replace('.', '/')}/{filename}"
-
+        
+        relative_path = _build_relative_path(filename, code_block)
+        
+        # Handle duplicates
         final_path = relative_path
-        # Ensure we do not accidentally overwrite duplicates
         dedupe_suffix = 1
         while final_path in sources:
-            stem = filename[:-5] if filename.lower().endswith(".java") else filename
+            stem, ext = filename.rsplit(".", 1)
             dedupe_suffix += 1
-            suffix_filename = f"{stem}_{dedupe_suffix}.java"
-            if package_name:
-                final_path = f"{package_name.replace('.', '/')}/{suffix_filename}"
-            else:
-                final_path = suffix_filename
-                
+            suffix_filename = f"{stem}_{dedupe_suffix}.{ext}"
+            final_path = _build_relative_path(suffix_filename, code_block)
+        
         sources[final_path] = code_block if code_block.endswith("\n") else f"{code_block}\n"
+    
     return sources
 
 
@@ -159,13 +270,13 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
     pdfium_error: Exception | None = None
     try:
         texts = _extract_texts_with_pdfium(pdf_bytes)
-    except Exception as exc:  # pragma: no cover - depends on file contents
+    except Exception as exc:
         pdfium_error = exc
 
     if not texts or not any(t.strip() for t in texts):
         try:
             texts = _extract_texts_with_pdfplumber(pdf_bytes)
-        except Exception as exc:  # pragma: no cover - depends on file contents
+        except Exception as exc:
             if pdfium_error:
                 raise RuntimeError(
                     "Failed to extract PDF text using both pypdfium2 and pdfplumber",
@@ -176,26 +287,19 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
     if len(texts) > 1:
         texts = texts[1:]
     else:
-        # If there's only 1 page, maybe we should keep it or skip it?
-        # User said "from 2nd page", so if only 1 page, result is empty.
         texts = []
 
     sources = extract_sources_from_pages(texts)
     return sources
 
 
-
-
-
 def generate_file_map(sources: Dict[str, str], base_dir: str = "") -> Dict[str, str]:
     """Generate a mapping of full file paths to source code."""
     file_map: Dict[str, str] = {}
     
-    # Normalize base_dir
     base_dir = base_dir.strip().strip("/\\")
     
     for rel_path, code in sources.items():
-        # Build the full path
         if base_dir:
             full_path = f"{base_dir}/{rel_path}"
         else:
