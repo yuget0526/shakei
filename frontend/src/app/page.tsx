@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  useState,
-  useCallback,
-  ChangeEvent,
-  DragEvent,
-  useMemo,
-  useEffect,
-} from "react";
-import { useRouter } from "next/navigation";
+import { useState, useCallback, ChangeEvent, DragEvent, useMemo } from "react";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -16,7 +8,6 @@ const API_BASE_URL =
 type UploadState = "idle" | "uploading" | "success" | "error";
 
 export default function Home() {
-  const router = useRouter();
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [statusMessage, setStatusMessage] = useState("PDF を選択してください");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -29,85 +20,52 @@ export default function Home() {
   > | null>(null);
   const [showCarousel, setShowCarousel] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
+  const handleFile = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) {
       return;
     }
-    setIsAdmin(localStorage.getItem("is_admin") === "true");
-  }, [router]);
+    const file = fileList[0];
+    const isPdf =
+      file.type === "application/pdf" ||
+      file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setErrorMessage("PDF 形式のファイルのみアップロードできます");
+      return;
+    }
+    setErrorMessage(null);
+    setStatusMessage(`${file.name} を解析しています...`);
+    setUploadState("uploading");
 
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("is_admin");
-    router.push("/login");
-  }, [router]);
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+      formData.append("base_directory", "");
+      formData.append("response_format", "json");
 
-  const handleFile = useCallback(
-    async (fileList: FileList | null) => {
-      if (!fileList || fileList.length === 0) {
-        return;
+      const response = await fetch(`${API_BASE_URL}/extract`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const maybeJson = await response.json().catch(() => null);
+        const detail = maybeJson?.detail ?? "解析に失敗しました";
+        throw new Error(detail);
       }
-      const file = fileList[0];
-      const isPdf =
-        file.type === "application/pdf" ||
-        file.name.toLowerCase().endsWith(".pdf");
-      if (!isPdf) {
-        setErrorMessage("PDF 形式のファイルのみアップロードできます");
-        return;
-      }
-      setErrorMessage(null);
-      setStatusMessage(`${file.name} を解析しています...`);
-      setUploadState("uploading");
 
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) {
-          router.push("/login");
-          return;
-        }
-
-        const formData = new FormData();
-        formData.append("pdf", file);
-        formData.append("base_directory", "");
-        formData.append("response_format", "json");
-
-        const response = await fetch(`${API_BASE_URL}/extract`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        });
-
-        if (response.status === 401) {
-          handleLogout();
-          return;
-        }
-
-        if (!response.ok) {
-          const maybeJson = await response.json().catch(() => null);
-          const detail = maybeJson?.detail ?? "解析に失敗しました";
-          throw new Error(detail);
-        }
-
-        const files: Record<string, string> = await response.json();
-        setExtractedFiles(files);
-        setStep("preview");
-        setUploadState("success");
-        setStatusMessage("解析が完了しました。");
-      } catch (error) {
-        setUploadState("error");
-        const message = error instanceof Error ? error.message : "不明なエラー";
-        setErrorMessage(message);
-        setStatusMessage("解析に失敗しました");
-      }
-    },
-    [router, handleLogout]
-  );
+      const files: Record<string, string> = await response.json();
+      setExtractedFiles(files);
+      setStep("preview");
+      setUploadState("success");
+      setStatusMessage("解析が完了しました。");
+    } catch (error) {
+      setUploadState("error");
+      const message = error instanceof Error ? error.message : "不明なエラー";
+      setErrorMessage(message);
+      setStatusMessage("解析に失敗しました");
+    }
+  }, []);
 
   const onFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     handleFile(event.target.files);
@@ -204,34 +162,16 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-purple-50 via-slate-50 to-slate-100 px-4 py-10 text-slate-900">
       <main className="mx-auto w-full max-w-4xl space-y-8">
-        <header className="flex items-center justify-between">
-          <div className="space-y-3 text-center sm:text-left">
-            <p className="text-sm font-semibold tracking-widest text-purple-500">
-              写経.exe
-            </p>
-            <h1 className="text-4xl font-semibold leading-tight text-slate-900">
-              PDF から 写経を自動で行います
-            </h1>
-            <p className="text-base text-slate-600">
-              写経なんて誰がやっても一緒だよね
-            </p>
-          </div>
-          <div className="flex gap-4">
-            {isAdmin && (
-              <button
-                onClick={() => router.push("/admin")}
-                className="text-sm font-medium text-slate-600 hover:text-purple-600"
-              >
-                管理者メニュー
-              </button>
-            )}
-            <button
-              onClick={handleLogout}
-              className="text-sm font-medium text-slate-600 hover:text-rose-600"
-            >
-              ログアウト
-            </button>
-          </div>
+        <header className="space-y-3 text-center sm:text-left">
+          <p className="text-sm font-semibold tracking-widest text-purple-500">
+            写経.exe
+          </p>
+          <h1 className="text-4xl font-semibold leading-tight text-slate-900">
+            PDF から 写経を自動で行います
+          </h1>
+          <p className="text-base text-slate-600">
+            写経なんて誰がやっても一緒だよね
+          </p>
         </header>
 
         <section className="rounded-3xl bg-white/95 p-6 shadow-2xl shadow-purple-100/60 backdrop-blur transition-all duration-500">
