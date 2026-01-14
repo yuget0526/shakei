@@ -99,18 +99,9 @@ def _preprocess_page_text(text: str) -> str:
     content_lines = lines[header_end:]
     cleaned: List[str] = []
     
-    i = 0
-    while i < len(content_lines):
-        line = content_lines[i]
-        
-        # Check if this line is just a line number
+    for line in content_lines:
+        # Skip lines that are just line numbers
         if re.match(r"^\s*\d+\s*$", line):
-            # Check if next line is also a line number
-            # If so, this line number represents an empty line
-            if i + 1 < len(content_lines) and re.match(r"^\s*\d+\s*$", content_lines[i + 1]):
-                cleaned.append("")  # Consecutive line numbers = empty line
-            # Otherwise, skip this line number (next line is the code, or end of page)
-            i += 1
             continue
         
         # For lines with leading line numbers (pypdfium2 format)
@@ -121,7 +112,6 @@ def _preprocess_page_text(text: str) -> str:
             cleaned.append(f"{keep_spacing}{remainder}")
         else:
             cleaned.append(line)
-        i += 1
     
     # Remove leading/trailing empty lines only, preserve indentation
     while cleaned and not cleaned[0].strip():
