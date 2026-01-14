@@ -99,10 +99,22 @@ def _preprocess_page_text(text: str) -> str:
     content_lines = lines[header_end:]
     cleaned: List[str] = []
     
-    for line in content_lines:
-        # Skip lines that are just line numbers (PyMuPDF format)
+    i = 0
+    while i < len(content_lines):
+        line = content_lines[i]
+        
+        # Check if this line is just a line number
         if re.match(r"^\s*\d+\s*$", line):
+            # Check if next line is also a line number or end of content
+            # If so, this line number represents an empty line
+            if i + 1 >= len(content_lines):
+                cleaned.append("")  # Empty line at end
+            elif re.match(r"^\s*\d+\s*$", content_lines[i + 1]):
+                cleaned.append("")  # Consecutive line numbers = empty line
+            # Otherwise, skip this line number (next line is the code)
+            i += 1
             continue
+        
         # For lines with leading line numbers (pypdfium2 format)
         match = re.match(r"^\s*\d+(\s+)(.*)$", line)
         if match:
@@ -111,6 +123,7 @@ def _preprocess_page_text(text: str) -> str:
             cleaned.append(f"{keep_spacing}{remainder}")
         else:
             cleaned.append(line)
+        i += 1
     
     return "\n".join(cleaned).strip()
 
