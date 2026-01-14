@@ -123,7 +123,13 @@ def _preprocess_page_text(text: str) -> str:
             cleaned.append(line)
         i += 1
     
-    return "\n".join(cleaned).strip()
+    # Remove leading/trailing empty lines only, preserve indentation
+    while cleaned and not cleaned[0].strip():
+        cleaned.pop(0)
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+    
+    return "\n".join(cleaned)
 
 
 def _extract_code_block(text: str, language: str = "java") -> str | None:
