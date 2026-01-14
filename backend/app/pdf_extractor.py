@@ -69,17 +69,41 @@ def _extract_filename_and_page_info(text: str) -> Tuple[str | None, int | None, 
 
 
 def _preprocess_page_text(text: str) -> str:
-    """Remove printed headers and leading line numbers."""
+    """Remove printed headers and leading line numbers.
+    
+    PyMuPDF format:
+    - Header lines: Page info, Filename, Printed timestamp, Printed for
+    - Then alternating: code line, line number, code line, line number...
+    """
     if not text:
         return ""
     lines = text.splitlines()
-    # Drop the first two header lines (e.g., filename + printed timestamp)
-    content_lines = lines[2:] if len(lines) > 2 else []
-    cleaned: List[str] = []
-    for line in content_lines:
-        if re.match(r"^\s*\d+\s*$", line):
-            cleaned.append("")
+    
+    # Find where header ends (look for first line that's not header-like)
+    header_end = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Skip obvious header lines
+        if stripped.startswith('Page ') and '/' in stripped:
+            header_end = i + 1
             continue
+        if stripped.startswith('Printed'):
+            header_end = i + 1
+            continue
+        # Check if it's a filename line (contains .java or .php)
+        if re.search(r'\.(java|php)$', stripped, re.IGNORECASE):
+            header_end = i + 1
+            continue
+        break
+    
+    content_lines = lines[header_end:]
+    cleaned: List[str] = []
+    
+    for line in content_lines:
+        # Skip lines that are just line numbers (PyMuPDF format)
+        if re.match(r"^\s*\d+\s*$", line):
+            continue
+        # For lines with leading line numbers (pypdfium2 format)
         match = re.match(r"^\s*\d+(\s+)(.*)$", line)
         if match:
             spacing, remainder = match.groups()
@@ -87,6 +111,7 @@ def _preprocess_page_text(text: str) -> str:
             cleaned.append(f"{keep_spacing}{remainder}")
         else:
             cleaned.append(line)
+    
     return "\n".join(cleaned).strip()
 
 
