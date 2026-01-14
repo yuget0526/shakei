@@ -1,11 +1,59 @@
 "use client";
 
-import { useState, useCallback, ChangeEvent, DragEvent, useMemo } from "react";
+import {
+  useState,
+  useCallback,
+  ChangeEvent,
+  DragEvent,
+  useMemo,
+  useEffect,
+} from "react";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 type UploadState = "idle" | "uploading" | "success" | "error";
+type Language = "java" | "php" | "auto";
+
+const LANGUAGE_CONFIG = {
+  java: {
+    label: "Java",
+    hint: "IntelliJ でプロジェクトを作成し、src フォルダを選択してください",
+    storageKey: "shakei_java_dir",
+  },
+  php: {
+    label: "PHP",
+    hint: "XAMPP の htdocs フォルダ、または MAMP の www フォルダを選択してください",
+    storageKey: "shakei_php_dir",
+  },
+  auto: {
+    label: "自動検出",
+    hint: "PDFから言語を自動検出します。保存先を選択してください",
+    storageKey: "shakei_auto_dir",
+  },
+};
+
+// File System Access API の型定義
+interface FileSystemDirectoryHandle {
+  name: string;
+  getDirectoryHandle(
+    name: string,
+    options?: { create?: boolean }
+  ): Promise<FileSystemDirectoryHandle>;
+  getFileHandle(
+    name: string,
+    options?: { create?: boolean }
+  ): Promise<FileSystemFileHandle>;
+}
+
+interface FileSystemFileHandle {
+  createWritable(): Promise<FileSystemWritableFileStream>;
+}
+
+interface FileSystemWritableFileStream {
+  write(data: string): Promise<void>;
+  close(): Promise<void>;
+}
 
 export default function Home() {
   const [uploadState, setUploadState] = useState<UploadState>("idle");
@@ -20,6 +68,15 @@ export default function Home() {
   > | null>(null);
   const [showCarousel, setShowCarousel] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const [selectedLanguage, setSelectedLanguage] = useState<Language>("auto");
+  const [savedDirName, setSavedDirName] = useState<string | null>(null);
+
+  // ローカルストレージから保存済みディレクトリ名を取得
+  useEffect(() => {
+    const storageKey = LANGUAGE_CONFIG[selectedLanguage].storageKey;
+    const saved = localStorage.getItem(storageKey);
+    setSavedDirName(saved);
+  }, [selectedLanguage]);
 
   const handleFile = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) {
@@ -83,8 +140,27 @@ export default function Home() {
     event.preventDefault();
   };
 
+  // 言語に応じてファイルをフィルタリング
+  const filteredFiles = useMemo(() => {
+    if (!extractedFiles) return {};
+    if (selectedLanguage === "auto") return extractedFiles;
+
+    const filtered: Record<string, string> = {};
+    const ext = selectedLanguage === "java" ? ".java" : ".php";
+
+    for (const [path, content] of Object.entries(extractedFiles)) {
+      if (path.toLowerCase().endsWith(ext)) {
+        filtered[path] = content;
+      }
+    }
+    return filtered;
+  }, [extractedFiles, selectedLanguage]);
+
   const handleDirectGeneration = async () => {
-    if (!extractedFiles) return;
+    if (!filteredFiles || Object.keys(filteredFiles).length === 0) {
+      setErrorMessage("保存するファイルがありません");
+      return;
+    }
 
     // @ts-expect-error showDirectoryPicker is not standard yet
     if (typeof window.showDirectoryPicker !== "function") {
@@ -96,13 +172,19 @@ export default function Home() {
 
     try {
       // @ts-expect-error showDirectoryPicker is not standard yet
-      const dirHandle = await window.showDirectoryPicker();
+      const dirHandle: FileSystemDirectoryHandle =
+        await window.showDirectoryPicker();
       if (!dirHandle) return;
+
+      // ディレクトリ名をローカルストレージに保存
+      const storageKey = LANGUAGE_CONFIG[selectedLanguage].storageKey;
+      localStorage.setItem(storageKey, dirHandle.name);
+      setSavedDirName(dirHandle.name);
 
       setStep("saving");
       setStatusMessage("ファイルを保存しています...");
 
-      for (const [path, content] of Object.entries(extractedFiles)) {
+      for (const [path, content] of Object.entries(filteredFiles)) {
         const parts = path.split("/");
         let currentHandle = dirHandle;
 
@@ -128,10 +210,10 @@ export default function Home() {
       setStatusMessage("ファイルの保存が完了しました。");
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        setStep("preview"); // Revert to preview if cancelled
+        setStep("preview");
         return;
       }
-      setStep("preview"); // Revert to preview on error
+      setStep("preview");
       setUploadState("error");
       const message = error instanceof Error ? error.message : "不明なエラー";
       setErrorMessage(message);
@@ -140,14 +222,25 @@ export default function Home() {
   };
 
   const fileList = useMemo(() => {
-    if (!extractedFiles) return [];
-    return Object.keys(extractedFiles).sort();
-  }, [extractedFiles]);
+    return Object.keys(filteredFiles).sort();
+  }, [filteredFiles]);
 
   const currentFileContent = useMemo(() => {
-    if (!extractedFiles || fileList.length === 0) return "";
-    return extractedFiles[fileList[carouselIndex]];
-  }, [extractedFiles, fileList, carouselIndex]);
+    if (fileList.length === 0) return "";
+    return filteredFiles[fileList[carouselIndex]] || "";
+  }, [filteredFiles, fileList, carouselIndex]);
+
+  // 検出されたファイル言語の統計
+  const detectedLanguages = useMemo(() => {
+    if (!extractedFiles) return { java: 0, php: 0 };
+    let java = 0;
+    let php = 0;
+    for (const path of Object.keys(extractedFiles)) {
+      if (path.endsWith(".java")) java++;
+      if (path.endsWith(".php")) php++;
+    }
+    return { java, php };
+  }, [extractedFiles]);
 
   const reset = () => {
     setStep("upload");
@@ -214,7 +307,7 @@ export default function Home() {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold text-slate-800">
-                  抽出されたファイル ({fileList.length})
+                  抽出されたファイル
                 </h2>
                 <button
                   onClick={reset}
@@ -224,7 +317,63 @@ export default function Home() {
                 </button>
               </div>
 
-              {!showCarousel ? (
+              {/* 言語統計 */}
+              <div className="flex gap-4 text-sm">
+                <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-700">
+                  Java: {detectedLanguages.java}ファイル
+                </span>
+                <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-700">
+                  PHP: {detectedLanguages.php}ファイル
+                </span>
+              </div>
+
+              {/* 言語セレクター */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  保存する言語を選択
+                </label>
+                <div className="flex gap-2">
+                  {(Object.keys(LANGUAGE_CONFIG) as Language[]).map((lang) => (
+                    <button
+                      key={lang}
+                      onClick={() => {
+                        setSelectedLanguage(lang);
+                        setCarouselIndex(0);
+                      }}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                        selectedLanguage === lang
+                          ? "bg-purple-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {LANGUAGE_CONFIG[lang].label}
+                      {lang !== "auto" && (
+                        <span className="ml-1 opacity-70">
+                          (
+                          {lang === "java"
+                            ? detectedLanguages.java
+                            : detectedLanguages.php}
+                          )
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {savedDirName && (
+                  <p className="text-xs text-slate-500">
+                    前回の保存先:{" "}
+                    <span className="font-mono">{savedDirName}</span>
+                  </p>
+                )}
+              </div>
+
+              {fileList.length === 0 ? (
+                <div className="rounded-xl bg-amber-50 p-4 text-center">
+                  <p className="text-amber-700">
+                    選択した言語のファイルがありません
+                  </p>
+                </div>
+              ) : !showCarousel ? (
                 <div className="space-y-4">
                   <ul className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-mono text-slate-700">
                     {fileList.map((file) => (
@@ -241,7 +390,7 @@ export default function Home() {
                       onClick={() => setShowCarousel(true)}
                       className="inline-flex items-center justify-center rounded-full bg-purple-100 px-6 py-3 text-sm font-semibold text-purple-700 transition hover:bg-purple-200"
                     >
-                      作成を実行 (プレビュー)
+                      プレビューを見る
                     </button>
                   </div>
                 </div>
@@ -271,17 +420,18 @@ export default function Home() {
                     >
                       ← 前へ
                     </button>
-                    <div className="flex gap-2">
-                      {fileList.map((_, idx) => (
-                        <div
-                          key={idx}
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            idx === carouselIndex
-                              ? "bg-purple-500"
-                              : "bg-slate-300"
-                          }`}
-                        />
-                      ))}
+                    <div className="flex gap-1 flex-wrap max-w-xs justify-center">
+                      {fileList.length <= 20 &&
+                        fileList.map((_, idx) => (
+                          <div
+                            key={idx}
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              idx === carouselIndex
+                                ? "bg-purple-500"
+                                : "bg-slate-300"
+                            }`}
+                          />
+                        ))}
                     </div>
                     <button
                       onClick={() =>
@@ -299,19 +449,14 @@ export default function Home() {
                   <div className="pt-4 border-t border-slate-100 space-y-3">
                     <div className="rounded-lg bg-amber-50 p-3 text-center">
                       <p className="text-sm font-medium text-amber-800">
-                        プロジェクトはもう作成した？
-                      </p>
-                      <p className="text-xs text-amber-600 mt-1">
-                        まだの場合は IntelliJ でプロジェクトを作成し、その中の{" "}
-                        <span className="font-bold">src</span>{" "}
-                        フォルダを選択してください。
+                        {LANGUAGE_CONFIG[selectedLanguage].hint}
                       </p>
                     </div>
                     <button
                       onClick={handleDirectGeneration}
                       className="w-full inline-flex items-center justify-center rounded-full bg-slate-900 px-6 py-4 text-base font-semibold text-white transition hover:bg-slate-800 shadow-lg shadow-purple-200"
                     >
-                      フォルダを選択して抽出
+                      フォルダを選択して保存 ({fileList.length}ファイル)
                     </button>
                   </div>
                 </div>
@@ -349,7 +494,12 @@ export default function Home() {
                 完了しました！
               </h2>
               <p className="text-slate-600">
-                指定したフォルダにファイルが保存されました。
+                {savedDirName && (
+                  <span className="font-mono text-purple-600">
+                    {savedDirName}
+                  </span>
+                )}
+                {savedDirName && " に"}ファイルが保存されました。
               </p>
               <button
                 onClick={reset}
