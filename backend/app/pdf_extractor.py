@@ -150,11 +150,42 @@ def _preprocess_page_text(text: str) -> str:
     # Sort by line number
     parsed.sort(key=lambda x: x[0])
     
+    # Post-process: merge lines where previous line is incomplete
+    def is_incomplete(code: str) -> bool:
+        """Check if code line is incomplete and expects continuation."""
+        s = code.strip()
+        if not s:
+            return False
+        # Lines that are just comments or annotations
+        if s.startswith(('*', '//', '@', '/*')):
+            return False
+        # Opening brackets/parens without closing = incomplete (highest priority)
+        open_count = s.count('(') + s.count('[')
+        close_count = s.count(')') + s.count(']')
+        if open_count > close_count:
+            return True
+        # Lines ending with these are complete
+        if s.endswith((';', '{', '}', '*/', '//', ',')):
+            return False
+        return False
+    
+    merged: List[Tuple[int, str]] = []
+    for line_num, code in parsed:
+        if merged and is_incomplete(merged[-1][1]):
+            # Previous line is incomplete, append this code to it
+            prev_num, prev_code = merged[-1]
+            if prev_code.endswith((' ', '\t')):
+                merged[-1] = (prev_num, prev_code + code.lstrip())
+            else:
+                merged[-1] = (prev_num, prev_code + ' ' + code.lstrip())
+        else:
+            merged.append((line_num, code))
+    
     # Build output with gaps filled as empty lines
     cleaned: List[str] = []
     expected_line = 1
     
-    for line_num, code in parsed:
+    for line_num, code in merged:
         # Fill any gaps with empty lines
         while expected_line < line_num:
             cleaned.append("")
