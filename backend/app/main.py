@@ -167,13 +167,12 @@ def health() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 # PDF抽出メインエンドポイント
-# ログイン済みユーザーのみアクセス可能です
+# 認証不要 - 誰でもアクセス可能
 @app.post("/extract", response_model=None)
 async def extract_java_sources(
     pdf: UploadFile = File(...),
     base_directory: str = Form(""),
     response_format: str = Form("zip"),
-    current_user: User = Depends(get_current_user) # 認証が必要
 ) -> StreamingResponse | JSONResponse:
     # PDFファイルかどうかのチェック
     if not pdf.filename or not pdf.filename.lower().endswith(".pdf"):
