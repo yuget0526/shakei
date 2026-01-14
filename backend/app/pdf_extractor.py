@@ -267,19 +267,21 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> Dict[str, str]:
         raise ValueError("PDF file is empty")
 
     texts: List[str] = []
-    pdfium_error: Exception | None = None
+    pdfplumber_error: Exception | None = None
+    
+    # Prefer pdfplumber as it handles text spacing better
     try:
-        texts = _extract_texts_with_pdfium(pdf_bytes)
+        texts = _extract_texts_with_pdfplumber(pdf_bytes)
     except Exception as exc:
-        pdfium_error = exc
+        pdfplumber_error = exc
 
     if not texts or not any(t.strip() for t in texts):
         try:
-            texts = _extract_texts_with_pdfplumber(pdf_bytes)
+            texts = _extract_texts_with_pdfium(pdf_bytes)
         except Exception as exc:
-            if pdfium_error:
+            if pdfplumber_error:
                 raise RuntimeError(
-                    "Failed to extract PDF text using both pypdfium2 and pdfplumber",
+                    "Failed to extract PDF text using both pdfplumber and pypdfium2",
                 ) from exc
             raise
 
