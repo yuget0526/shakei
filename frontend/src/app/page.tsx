@@ -72,6 +72,7 @@ export default function Home() {
     string,
     string
   > | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
 
   // 言語ごとの保存先ディレクトリハンドル
   const [javaDirHandle, setJavaDirHandle] =
@@ -88,6 +89,11 @@ export default function Home() {
   // プレビュー用の状態
   const [previewLanguage, setPreviewLanguage] = useState<Language | null>(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
+
+  // File System Access APIが使えるか
+  const canUseFileSystemAPI =
+    typeof window !== "undefined" &&
+    typeof window.showDirectoryPicker === "function";
 
   // ローカルストレージから保存済みディレクトリ名を取得
   useEffect(() => {
@@ -127,6 +133,7 @@ export default function Home() {
       return;
     }
 
+    setPdfFile(file);
     setErrorMessage(null);
     setStatusMessage(`${file.name} を解析しています...`);
     setUploadState("uploading");
@@ -179,18 +186,17 @@ export default function Home() {
 
   // フォルダ選択
   const selectFolder = async (language: Language) => {
-    if (typeof window.showDirectoryPicker !== "function") {
+    if (!canUseFileSystemAPI) {
       setErrorMessage(
-        "このブラウザはフォルダ選択に対応していません。Chrome/Edge を使用してください。"
+        "このブラウザはフォルダ選択に対応していません。ZIPダウンロードを使用してください。"
       );
       return;
     }
 
     try {
-      const dirHandle = await window.showDirectoryPicker();
+      const dirHandle = await window.showDirectoryPicker!();
       if (!dirHandle) return;
 
-      // ローカルストレージに保存
       localStorage.setItem(
         LANGUAGE_CONFIG[language].storageKey,
         dirHandle.name
@@ -202,9 +208,11 @@ export default function Home() {
       } else {
         setPhpDirHandle(dirHandle);
       }
+      setErrorMessage(null);
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
-        setErrorMessage("フォルダの選択に失敗しました");
+        console.error("Folder selection error:", error);
+        // エラーを表示しない（ユーザーがキャンセルしたか、制限に引っかかった）
       }
     }
   };
@@ -241,7 +249,6 @@ export default function Home() {
     const hasJava = Object.keys(javaFiles).length > 0;
     const hasPHP = Object.keys(phpFiles).length > 0;
 
-    // 必要なフォルダが選択されているかチェック
     if (hasJava && !javaDirHandle) {
       setErrorMessage("Java ファイルの保存先を選択してください");
       return;
@@ -273,6 +280,42 @@ export default function Home() {
     }
   };
 
+  // ZIPダウンロード（言語個別）
+  const downloadZip = async (language: Language) => {
+    if (!pdfFile) return;
+
+    try {
+      const formData = new FormData();
+      formData.append("pdf", pdfFile);
+      formData.append("base_directory", "");
+      formData.append("response_format", "zip");
+      formData.append("language", language);
+
+      const response = await fetch(`${API_BASE_URL}/extract`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("ZIPの生成に失敗しました");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `extracted_${language}_sources.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "ダウンロードに失敗しました"
+      );
+    }
+  };
+
   // プレビュー用のファイルリスト
   const previewFileList = useMemo(() => {
     if (!previewLanguage) return [];
@@ -289,6 +332,7 @@ export default function Home() {
   const reset = () => {
     setStep("upload");
     setExtractedFiles(null);
+    setPdfFile(null);
     setJavaDirHandle(null);
     setPhpDirHandle(null);
     setPreviewLanguage(null);
@@ -399,8 +443,8 @@ export default function Home() {
                           : "border-slate-200 bg-slate-50"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <span
                             className={`px-3 py-1 rounded-full text-sm font-medium ${
                               config.color === "orange"
@@ -415,32 +459,35 @@ export default function Home() {
                               ✓ {dirHandle.name}
                             </span>
                           )}
-                          {!isSelected && savedDirs[lang] && (
-                            <span className="text-xs text-slate-400">
-                              前回: {savedDirs[lang]}
-                            </span>
-                          )}
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap">
                           <button
                             onClick={() => {
                               setPreviewLanguage(lang);
                               setCarouselIndex(0);
                             }}
-                            className="text-sm text-purple-600 hover:text-purple-800"
+                            className="text-sm text-purple-600 hover:text-purple-800 px-2"
                           >
                             プレビュー
                           </button>
                           <button
-                            onClick={() => selectFolder(lang)}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                              isSelected
-                                ? "bg-slate-200 text-slate-600 hover:bg-slate-300"
-                                : "bg-purple-600 text-white hover:bg-purple-700"
-                            }`}
+                            onClick={() => downloadZip(lang)}
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition"
                           >
-                            {isSelected ? "変更" : "フォルダを選択"}
+                            ZIPダウンロード
                           </button>
+                          {canUseFileSystemAPI && (
+                            <button
+                              onClick={() => selectFolder(lang)}
+                              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                                isSelected
+                                  ? "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                                  : "bg-purple-600 text-white hover:bg-purple-700"
+                              }`}
+                            >
+                              {isSelected ? "変更" : "フォルダを選択"}
+                            </button>
+                          )}
                         </div>
                       </div>
                       <p className="mt-2 text-xs text-slate-500">
@@ -498,20 +545,33 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 保存ボタン */}
-              <button
-                onClick={handleSave}
-                disabled={!canSave}
-                className={`w-full rounded-full px-6 py-4 text-base font-semibold transition shadow-lg ${
-                  canSave
-                    ? "bg-slate-900 text-white hover:bg-slate-800 shadow-purple-200"
-                    : "bg-slate-300 text-slate-500 cursor-not-allowed"
-                }`}
-              >
-                {canSave
-                  ? "すべてのファイルを保存"
-                  : "保存先を選択してください"}
-              </button>
+              {/* 保存ボタン（フォルダ選択が使える場合のみ） */}
+              {canUseFileSystemAPI && (
+                <button
+                  onClick={handleSave}
+                  disabled={!canSave}
+                  className={`w-full rounded-full px-6 py-4 text-base font-semibold transition shadow-lg ${
+                    canSave
+                      ? "bg-slate-900 text-white hover:bg-slate-800 shadow-purple-200"
+                      : "bg-slate-300 text-slate-500 cursor-not-allowed"
+                  }`}
+                >
+                  {canSave
+                    ? "すべてのファイルを保存"
+                    : "保存先を選択してください"}
+                </button>
+              )}
+
+              {/* フォルダ選択が使えない場合のメッセージ */}
+              {!canUseFileSystemAPI && (
+                <div className="rounded-xl bg-amber-50 p-4 text-center">
+                  <p className="text-sm text-amber-700">
+                    このブラウザではフォルダへの直接保存がサポートされていません。
+                    <br />
+                    上の「ZIPダウンロード」ボタンからファイルをダウンロードしてください。
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
