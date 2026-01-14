@@ -50,11 +50,6 @@ jobs:
           image: asia-northeast1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/backend:${{ github.sha }}
           flags: |
             --allow-unauthenticated
-          env_vars: |
-            DATABASE_URL=${{ secrets.DATABASE_URL }}
-            SECRET_KEY=${{ secrets.SECRET_KEY }}
-            ADMIN_USERNAME=admin
-            ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
 
       - name: Build and Push Frontend
         run: |
